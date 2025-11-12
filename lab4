@@ -1,0 +1,209 @@
+from typing import Dict, List, Set, FrozenSet
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
+
+seats = ['H1','L1','L2','L3','L4','R1','R2','R3','R4','H2']
+
+adjacent = {
+    'H1': {'L1','R1'},
+    'L1': {'H1','L2'},
+    'L2': {'L1','L3'},
+    'L3': {'L2','L4'},
+    'L4': {'L3','H2'},
+    'R1': {'H1','R2'},
+    'R2': {'R1','R3'},
+    'R3': {'R2','R4'},
+    'R4': {'R3','H2'},
+    'H2': {'L4','R4'},
+}
+
+opposite = {
+    'L1':'R1','L2':'R2','L3':'R3','L4':'R4',
+    'R1':'L1','R2':'L2','R3':'L3','R4':'L4',
+    'H1':'H2','H2':'H1',
+}
+
+left_path  = ['H1','L1','L2','L3','L4','H2']
+right_path = ['H1','R1','R2','R3','R4','H2']
+
+# Guests
+guests = ['Анна','Богдан','Катерина','Дмитро','Олена','Максим','Наталя','Олег','Руслан','Ігор']
+birthday = 'Анна'  # sits at H1
+
+
+couples: Set[FrozenSet[str]] = {
+    frozenset({'Катерина','Дмитро'}),
+}
+
+
+friend_groups: List[Set[str]] = [
+    {'Олена','Наталя','Руслан','Ігор'},
+    {'Анна','Богдан'},
+]
+
+
+enemies: Set[FrozenSet[str]] = {
+    frozenset({'Максим','Олег'}),
+    frozenset({'Анна','Олег'}),
+    
+}
+
+# ---------- CSP ----------
+variables = seats[:]
+domains: Dict[str, List[str]] = {s: guests[:] for s in seats}
+domains['H1'] = [birthday]  # fix birthday at H1
+
+def are_adjacent(a,b): return (b in adjacent.get(a,set())) or (a in adjacent.get(b,set()))
+def are_opposite(a,b): return opposite.get(a) == b
+
+# map person -> groups
+person_groups = {g: set() for g in guests}
+for gid, grp in enumerate(friend_groups):
+    for p in grp: person_groups[p].add(gid)
+
+def contiguous_ok(path: List[str], grp: Set[str], assign: Dict[str,str]) -> bool:
+    idxs = [i for i,s in enumerate(path) if s in assign and assign[s] in grp]
+    if not idxs: return True
+    lo, hi = min(idxs), max(idxs)
+    for i in range(lo, hi+1):
+        s = path[i]
+        if s in assign and assign[s] not in grp:
+            return False
+    return True
+
+def extendable(path: List[str], grp: Set[str], assign: Dict[str,str], domains: Dict[str, List[str]]) -> bool:
+    idxs = [i for i,s in enumerate(path) if s in assign and assign[s] in grp]
+    if not idxs: return True
+    lo, hi = min(idxs), max(idxs)
+    remaining = [m for m in grp if m not in assign.values()]
+    if not remaining: return True
+    candidates = []
+    if lo-1 >= 0: candidates.append(path[lo-1])
+    if hi+1 < len(path): candidates.append(path[hi+1])
+    for seat in candidates:
+        if seat not in assign and any(m in domains[seat] for m in remaining):
+            return True
+    return False
+
+def is_consistent(var: str, person: str, assignment: Dict[str,str]) -> bool:
+    if person in assignment.values(): return False
+
+    for s2, p2 in assignment.items():
+        if s2 == var: continue
+        pair = frozenset({person, p2})
+        if pair in enemies and (are_adjacent(var, s2) or are_opposite(var, s2)): return False
+        if pair in couples and not are_adjacent(var, s2): return False
+
+    assignment[var] = person
+    for gid in person_groups.get(person, set()):
+        grp = friend_groups[gid]
+        if not contiguous_ok(left_path, grp, assignment): del assignment[var]; return False
+        if not contiguous_ok(right_path, grp, assignment): del assignment[var]; return False
+        if not extendable(left_path, grp, assignment, domains): del assignment[var]; return False
+        if not extendable(right_path, grp, assignment, domains): del assignment[var]; return False
+    del assignment[var]
+
+    return True
+
+def select_unassigned_var(assignment: Dict[str,str]) -> str:
+    unassigned = [v for v in variables if v not in assignment]
+    unassigned.sort(key=lambda v: len(domains[v]))
+    return unassigned[0]
+
+def backtrack(assignment: Dict[str,str]):
+    if len(assignment) == len(variables): return assignment
+    var = select_unassigned_var(assignment)
+
+    def conflicts(person: str) -> int:
+        c = 0
+        for s2 in variables:
+            if s2 in assignment or s2 == var: continue
+            for p2 in domains[s2]:
+                pair = frozenset({person, p2})
+                if pair in enemies and (are_adjacent(var, s2) or are_opposite(var, s2)):
+                    c += 1
+        return c
+
+    for person in sorted(domains[var], key=conflicts):
+        if is_consistent(var, person, assignment):
+            assignment[var] = person
+            removed = {}
+            for s2 in variables:
+                if s2 != var and s2 not in assignment and person in domains[s2]:
+                    removed.setdefault(s2, []).append(person)
+                    domains[s2].remove(person)
+            res = backtrack(assignment)
+            if res: return res
+            del assignment[var]
+            for s2, vals in removed.items(): domains[s2].extend(vals)
+    return None
+
+initial_assignment: Dict[str,str] = {'H1': birthday}
+for s in seats:
+    if s != 'H1' and birthday in domains[s]:
+        domains[s].remove(birthday)
+
+solution = backtrack(initial_assignment)
+
+# ---------- VIS ----------
+def draw_groups(ax, x, title, groups, start_y):
+    ax.text(x, start_y, title, ha='left', va='top', fontweight='bold')
+    y = start_y - 0.08
+    if not groups:
+        ax.text(x, y, "—", ha='left', va='top'); return y-0.12
+    for g in groups:
+        ax.text(x, y, ", ".join(sorted(list(g))), ha='left', va='top'); y -= 0.12
+    return y-0.06
+
+def visualize(solution: Dict[str,str] | None):
+    fig, ax = plt.subplots(figsize=(12, 6))
+    coords = {
+        'H1': (0.0, 1.0),
+        'L1': (-1.0, 0.8), 'L2': (-1.0, 0.4), 'L3': (-1.0, 0.0), 'L4': (-1.0, -0.4),
+        'R1': ( 1.0, 0.8), 'R2': ( 1.0, 0.4), 'R3': ( 1.0, 0.0), 'R4': ( 1.0, -0.4),
+        'H2': (0.0, -0.6),
+    }
+    ax.plot([-1.3, -1.3, 1.3, 1.3, -1.3], [1.2, -0.8, -0.8, 1.2, 1.2])
+    for a, neighs in adjacent.items():
+        for b in neighs:
+            if seats.index(a) < seats.index(b):
+                xa, ya = coords[a]; xb, yb = coords[b]
+                ax.plot([xa, xb], [ya, yb], linewidth=1)
+    drawn=set()
+    for a,b in opposite.items():
+        key=tuple(sorted((a,b)))
+        if key in drawn: continue
+        drawn.add(key)
+        xa, ya = coords[a]; xb, yb = coords[b]
+        ax.plot([xa, xb], [ya, yb], linestyle='--', linewidth=1)
+    for s,(x,y) in coords.items():
+        ax.add_patch(plt.Circle((x,y),0.07,fill=False,linewidth=2))
+        ax.text(x,y+0.11,s,ha='center',va='bottom')
+        name = solution[s] if solution else '—'
+        ax.text(x,y,name,ha='center',va='center')
+
+    panel_x = 1.65
+    ax.text(panel_x, 1.0, "Вимоги:", ha='left', va='top', fontsize=12, fontweight='bold')
+    y = 0.85
+    y = draw_groups(ax, panel_x, "Групи друзів (суцільні блоки):", friend_groups, y)
+    y = draw_groups(ax, panel_x, "Пари (сусіди):", [set(p) for p in couples], y)
+    y = draw_groups(ax, panel_x, "Вороги (не поруч/не навпроти):", [set(p) for p in enemies], y)
+
+    ax.set_xlim(-1.6, 2.6); ax.set_ylim(-1.0, 1.3)
+    ax.set_aspect('equal', adjustable='box'); ax.axis('off')
+    title = "Розсадка (H1 чоло; H2 навпроти; друзі — блоками)"
+    if not solution: title += " — розв'язок не знайдено"
+    ax.set_title(title)
+    plt.show()
+
+if solution:
+    print("ЗНАЙДЕНО РОЗВ'ЯЗОК")
+    print(f"H1: {solution['H1']}")
+    print("Ліва:  ", " -> ".join(f"{s}:{solution[s]}" for s in ['L1','L2','L3','L4']))
+    print("Права: ", " -> ".join(f"{s}:{solution[s]}" for s in ['R1','R2','R3','R4']))
+    print(f"H2: {solution['H2']}")
+    visualize(solution)
+else:
+    print("Розв'язок не знайдено.")
+    visualize(None)
