@@ -30,18 +30,14 @@ else:
     random.seed()  
 
 def euclid(a, b):
-    """Евклідова відстань між точками a=(x1,y1) і b=(x2,y2)."""
+
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 def count_ones(bits):
     return sum(bits)
 
 def repair_to_k(bits):
-    """
-    Примусово робить у векторі рівно K_OPEN одиниць.
-    Якщо одиниць більше — випадково вимикаємо надлишок.
-    Якщо менше — випадково вмикаємо нулі.
-    """
+ 
     ones_idx = [i for i, b in enumerate(bits) if b == 1]
     zeros_idx = [i for i, b in enumerate(bits) if b == 0]
 
@@ -60,12 +56,12 @@ def repair_to_k(bits):
     return bits
 
 def generate_random_coordinates(num_points, min_coord=MIN_COORDINATE, max_coord=MAX_COORDINATE):
-    """Генерує випадкові координати для заданої кількості точок."""
+   
     return [(random.uniform(min_coord, max_coord), 
              random.uniform(min_coord, max_coord)) for _ in range(num_points)]
 
 def generate_clustered_coordinates(num_points, num_clusters=3, min_coord=MIN_COORDINATE, max_coord=MAX_COORDINATE):
-    """Генерує координати з кластеризацією."""
+ 
     points = []
     cluster_centers = [(random.uniform(min_coord, max_coord), 
                         random.uniform(min_coord, max_coord)) for _ in range(num_clusters)]
@@ -86,7 +82,6 @@ def generate_clustered_coordinates(num_points, num_clusters=3, min_coord=MIN_COO
     return points
 
 def create_individual():
-    """Створює випадкового індивіда-бітвектор довжини M з рівно K_OPEN одиницями."""
     bits = [0] * M
     ones_positions = random.sample(range(M), K_OPEN)
     for p in ones_positions:
@@ -94,10 +89,7 @@ def create_individual():
     return bits
 
 def calculate_fitness(individual):
-    """
-    Fitness = 1 / (1 + сумарна відстань клієнтів до найближчого відкритого складу).
-    Якщо всі нулі (теоретично бути не повинно після repair) — fitness = дуже малий.
-    """
+ 
     open_idx = [i for i, b in enumerate(individual) if b == 1]
     if not open_idx:
         return 1e-9
@@ -113,7 +105,7 @@ def calculate_fitness(individual):
     return 1.0 / (1.0 + total)
 
 def selection(population_with_fitness):
-    """Турнірна селекція."""
+  
     if len(population_with_fitness) < TOURNAMENT_SIZE:
         return random.choice(population_with_fitness)['individual'][:]
     tournament = random.sample(population_with_fitness, TOURNAMENT_SIZE)
@@ -121,7 +113,7 @@ def selection(population_with_fitness):
     return tournament[0]['individual'][:]
 
 def crossover(parent1, parent2):
-    """Одноточкове схрещування з подальшим repair до рівно K_OPEN одиниць."""
+    
     if len(parent1) <= 1:
         return parent1[:]
     point = random.randint(1, len(parent1) - 1)
@@ -129,7 +121,7 @@ def crossover(parent1, parent2):
     return repair_to_k(child)
 
 def mutate(individual):
-    """Побітовий фліп із MUTATION_RATE + repair до рівно K_OPEN одиниць."""
+
     mutated = individual[:]
     for i in range(len(mutated)):
         if random.random() < MUTATION_RATE:
@@ -137,7 +129,7 @@ def mutate(individual):
     return repair_to_k(mutated)
 
 def get_facility_input():
-    """Генерує випадкові дані або дозволяє ручний ввід."""
+
     global M, K_OPEN, N, FACILITIES, CLIENTS
 
     print("Доступні варіанти генерації:")
@@ -257,7 +249,7 @@ def get_facility_input():
     if N > 5: print("...")
 
 def visualize_solution(best_bits):
-    """Відображає клієнтів, всі кандидатні склади та відкриті склади."""
+
     if not best_bits:
         print("Немає рішення для візуалізації.")
         return
