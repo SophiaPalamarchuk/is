@@ -1,0 +1,379 @@
+import random
+import math
+import matplotlib.pyplot as plt
+
+FACILITIES = []   
+CLIENTS = []      
+M = 0             
+N = 0             
+K_OPEN = 0        
+
+POPULATION_SIZE = 60
+MAX_GENERATIONS = 200
+MUTATION_RATE = 0.08     
+ELITISM_COUNT = 2
+TOURNAMENT_SIZE = 3
+RANDOM_SEED = None       
+
+MIN_COORDINATE = 0
+MAX_COORDINATE = 20
+MIN_FACILITIES = 5
+MAX_FACILITIES = 15
+MIN_CLIENTS = 10
+MAX_CLIENTS = 30
+MIN_K_OPEN_RATIO = 0.2   
+MAX_K_OPEN_RATIO = 0.6   
+
+if RANDOM_SEED is not None:
+    random.seed(RANDOM_SEED)
+else:
+    random.seed()  
+
+def euclid(a, b):
+    """Евклідова відстань між точками a=(x1,y1) і b=(x2,y2)."""
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+def count_ones(bits):
+    return sum(bits)
+
+def repair_to_k(bits):
+    """
+    Примусово робить у векторі рівно K_OPEN одиниць.
+    Якщо одиниць більше — випадково вимикаємо надлишок.
+    Якщо менше — випадково вмикаємо нулі.
+    """
+    ones_idx = [i for i, b in enumerate(bits) if b == 1]
+    zeros_idx = [i for i, b in enumerate(bits) if b == 0]
+
+    while len(ones_idx) > K_OPEN:
+        idx = random.choice(ones_idx)
+        bits[idx] = 0
+        ones_idx.remove(idx)
+        zeros_idx.append(idx)
+
+    while len(ones_idx) < K_OPEN:
+        idx = random.choice(zeros_idx)
+        bits[idx] = 1
+        zeros_idx.remove(idx)
+        ones_idx.append(idx)
+
+    return bits
+
+def generate_random_coordinates(num_points, min_coord=MIN_COORDINATE, max_coord=MAX_COORDINATE):
+    """Генерує випадкові координати для заданої кількості точок."""
+    return [(random.uniform(min_coord, max_coord), 
+             random.uniform(min_coord, max_coord)) for _ in range(num_points)]
+
+def generate_clustered_coordinates(num_points, num_clusters=3, min_coord=MIN_COORDINATE, max_coord=MAX_COORDINATE):
+    """Генерує координати з кластеризацією."""
+    points = []
+    cluster_centers = [(random.uniform(min_coord, max_coord), 
+                        random.uniform(min_coord, max_coord)) for _ in range(num_clusters)]
+
+    points_per_cluster = num_points // num_clusters
+    remainder = num_points % num_clusters
+
+    for i, center in enumerate(cluster_centers):
+        current_cluster_size = points_per_cluster + (1 if i < remainder else 0)
+        for _ in range(current_cluster_size):
+            x = random.normalvariate(center[0], (max_coord - min_coord) * 0.1)
+            y = random.normalvariate(center[1], (max_coord - min_coord) * 0.1)
+
+            x = max(min_coord, min(max_coord, x))
+            y = max(min_coord, min(max_coord, y))
+            points.append((x, y))
+
+    return points
+
+def create_individual():
+    """Створює випадкового індивіда-бітвектор довжини M з рівно K_OPEN одиницями."""
+    bits = [0] * M
+    ones_positions = random.sample(range(M), K_OPEN)
+    for p in ones_positions:
+        bits[p] = 1
+    return bits
+
+def calculate_fitness(individual):
+    """
+    Fitness = 1 / (1 + сумарна відстань клієнтів до найближчого відкритого складу).
+    Якщо всі нулі (теоретично бути не повинно після repair) — fitness = дуже малий.
+    """
+    open_idx = [i for i, b in enumerate(individual) if b == 1]
+    if not open_idx:
+        return 1e-9
+
+    total = 0.0
+    for c in CLIENTS:
+        best = float('inf')
+        for j in open_idx:
+            d = euclid(c, FACILITIES[j])
+            if d < best:
+                best = d
+        total += best
+    return 1.0 / (1.0 + total)
+
+def selection(population_with_fitness):
+    """Турнірна селекція."""
+    if len(population_with_fitness) < TOURNAMENT_SIZE:
+        return random.choice(population_with_fitness)['individual'][:]
+    tournament = random.sample(population_with_fitness, TOURNAMENT_SIZE)
+    tournament.sort(key=lambda item: item['fitness'], reverse=True)
+    return tournament[0]['individual'][:]
+
+def crossover(parent1, parent2):
+    """Одноточкове схрещування з подальшим repair до рівно K_OPEN одиниць."""
+    if len(parent1) <= 1:
+        return parent1[:]
+    point = random.randint(1, len(parent1) - 1)
+    child = parent1[:point] + parent2[point:]
+    return repair_to_k(child)
+
+def mutate(individual):
+    """Побітовий фліп із MUTATION_RATE + repair до рівно K_OPEN одиниць."""
+    mutated = individual[:]
+    for i in range(len(mutated)):
+        if random.random() < MUTATION_RATE:
+            mutated[i] = 1 - mutated[i]
+    return repair_to_k(mutated)
+
+def get_facility_input():
+    """Генерує випадкові дані або дозволяє ручний ввід."""
+    global M, K_OPEN, N, FACILITIES, CLIENTS
+
+    print("Доступні варіанти генерації:")
+    print("1 - Повністю випадкові координати")
+
+    print("2 - Ручний ввід координат")
+    print("3 - Змінити параметри генерації")
+
+    ans = input("\nОберіть варіант (1-3): ").strip()
+
+    if ans in ['1',  '3']:
+        if ans == '3':
+
+            try:
+                global MIN_COORDINATE, MAX_COORDINATE, MIN_FACILITIES, MAX_FACILITIES, MIN_CLIENTS, MAX_CLIENTS
+                new_min_coord = float(input(f"Мінімальна координата [поточне: {MIN_COORDINATE}]: ") or MIN_COORDINATE)
+                new_max_coord = float(input(f"Максимальна координата [поточне: {MAX_COORDINATE}]: ") or MAX_COORDINATE)
+                new_min_fac = int(input(f"Мінімальна кількість складів [поточне: {MIN_FACILITIES}]: ") or MIN_FACILITIES)
+                new_max_fac = int(input(f"Максимальна кількість складів [поточне: {MAX_FACILITIES}]: ") or MAX_FACILITIES)
+                new_min_cli = int(input(f"Мінімальна кількість клієнтів [поточне: {MIN_CLIENTS}]: ") or MIN_CLIENTS)
+                new_max_cli = int(input(f"Максимальна кількість клієнтів [поточне: {MAX_CLIENTS}]: ") or MAX_CLIENTS)
+
+                if new_min_coord < new_max_coord and new_min_fac <= new_max_fac and new_min_cli <= new_max_cli:
+                    MIN_COORDINATE, MAX_COORDINATE = new_min_coord, new_max_coord
+                    MIN_FACILITIES, MAX_FACILITIES = new_min_fac, new_max_fac
+                    MIN_CLIENTS, MAX_CLIENTS = new_min_cli, new_max_cli
+                    print("Параметри оновлено!")
+                else:
+                    print("Невірні значення. Використовуються стандартні параметри.")
+            except ValueError:
+                print("Помилка вводу. Використовуються стандартні параметри.")
+
+        M = random.randint(MIN_FACILITIES, MAX_FACILITIES)
+        N = random.randint(MIN_CLIENTS, MAX_CLIENTS)
+        K_OPEN = random.randint(max(1, int(M * MIN_K_OPEN_RATIO)), min(M, int(M * MAX_K_OPEN_RATIO)))
+
+        if ans == '1':
+
+            FACILITIES = generate_random_coordinates(M)
+            CLIENTS = generate_random_coordinates(N)
+            print("\nЗгенеровано: Повністю випадкові координати")
+        else:
+
+            FACILITIES = generate_random_coordinates(M)
+            num_clusters = random.randint(2, 5)  
+            CLIENTS = generate_clustered_coordinates(N, num_clusters)
+            print(f"\nЗгенеровано: Кластеризовані координати ({num_clusters} кластери)")
+
+    elif ans == '2':
+
+        while True:
+            try:
+                M = int(input("Введіть кількість кандидатних складів M: "))
+                if M <= 0:
+                    print("M має бути > 0.")
+                    continue
+                break
+            except ValueError:
+                print("Введіть ціле число.")
+
+        while True:
+            try:
+                K_OPEN = int(input("Скільки складів відкрити (K_OPEN): "))
+                if not (1 <= K_OPEN <= M):
+                    print(f"K_OPEN має бути в діапазоні [1..{M}].")
+                    continue
+                break
+            except ValueError:
+                print("Введіть ціле число.")
+
+        FACILITIES = []
+        print("\nВведіть координати кандидатних складів (x y) построково:")
+        for i in range(M):
+            while True:
+                try:
+                    s = input(f"Facility F{i} (x y): ").strip()
+                    x, y = map(float, s.split())
+                    FACILITIES.append((x, y))
+                    break
+                except Exception:
+                    print("Помилка вводу. Приклад: 3.5 7")
+
+        while True:
+            try:
+                N = int(input("\nВведіть кількість клієнтів N: "))
+                if N <= 0:
+                    print("N має бути > 0.")
+                    continue
+                break
+            except ValueError:
+                print("Введіть ціле число.")
+
+        CLIENTS = []
+        print("\nВведіть координати клієнтів (x y) построково:")
+        for i in range(N):
+            while True:
+                try:
+                    s = input(f"Client C{i} (x y): ").strip()
+                    x, y = map(float, s.split())
+                    CLIENTS.append((x, y))
+                    break
+                except Exception:
+                    print("Помилка вводу. Приклад: 6 2.5")
+    else:
+        print("Невірний вибір. Використовую повністю випадкову генерацію.")
+        M = random.randint(MIN_FACILITIES, MAX_FACILITIES)
+        N = random.randint(MIN_CLIENTS, MAX_CLIENTS)
+        K_OPEN = random.randint(max(1, int(M * MIN_K_OPEN_RATIO)), min(M, int(M * MAX_K_OPEN_RATIO)))
+        FACILITIES = generate_random_coordinates(M)
+        CLIENTS = generate_random_coordinates(N)
+
+    print(f"\nЗгенеровано: {M} складів, {N} клієнтів, K_OPEN = {K_OPEN}")
+    print(f"Діапазон координат: [{MIN_COORDINATE}, {MAX_COORDINATE}]")
+    print("Перші 5 складів:", FACILITIES[:5])
+    print("Перші 5 клієнтів:", CLIENTS[:5])
+    if M > 5: print("...")
+    if N > 5: print("...")
+
+def visualize_solution(best_bits):
+    """Відображає клієнтів, всі кандидатні склади та відкриті склади."""
+    if not best_bits:
+        print("Немає рішення для візуалізації.")
+        return
+
+    open_idx = [i for i, b in enumerate(best_bits) if b == 1]
+    closed_idx = [i for i, b in enumerate(best_bits) if b == 0]
+
+    plt.figure(figsize=(12, 9))
+
+    xs = [c[0] for c in CLIENTS]
+    ys = [c[1] for c in CLIENTS]
+    plt.scatter(xs, ys, s=50, marker='o', label='Клієнти', alpha=0.7, color='blue')
+
+    if closed_idx:
+        xf = [FACILITIES[i][0] for i in closed_idx]
+        yf = [FACILITIES[i][1] for i in closed_idx]
+        plt.scatter(xf, yf, s=80, marker='s', alpha=0.6, label='Кандидатні (закриті)', color='gray')
+
+    xo = [FACILITIES[i][0] for i in open_idx]
+    yo = [FACILITIES[i][1] for i in open_idx]
+    plt.scatter(xo, yo, s=150, marker='*', label='Відкриті склади', color='red', edgecolors='darkred', linewidth=2)
+
+    for c in CLIENTS:
+        best_j = min(open_idx, key=lambda j: euclid(c, FACILITIES[j]))
+        f = FACILITIES[best_j]
+        plt.plot([c[0], f[0]], [c[1], f[1]], linewidth=0.5, alpha=0.4, color='green')
+
+    plt.title(f"Розв'язок Facility Location Problem\n"
+              f"Відкрито {K_OPEN} зі {M} складів | {N} клієнтів | "
+              f"Координати [{MIN_COORDINATE}-{MAX_COORDINATE}]")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.xlabel('X координата')
+    plt.ylabel('Y координата')
+    plt.tight_layout()
+    plt.show()
+
+def run_ga():
+    global FACILITIES, CLIENTS, M, N, K_OPEN
+
+    get_facility_input()
+
+    if M == 0 or N == 0:
+        print("Недостатньо даних (M або N дорівнює 0).")
+        return
+
+    population = [create_individual() for _ in range(POPULATION_SIZE)]
+    best_solution = None
+    best_fitness = 0.0
+
+    print(f"\n--- Запуск ГА для Facility Location (M={M}, N={N}, K_OPEN={K_OPEN}) ---")
+    print(f"Параметри ГА: POP_SIZE={POPULATION_SIZE}, GENERATIONS={MAX_GENERATIONS}, MUT_RATE={MUTATION_RATE}")
+    print(f"Діапазон координат: [{MIN_COORDINATE}, {MAX_COORDINATE}]")
+
+    for gen in range(1, MAX_GENERATIONS + 1):
+
+        pop_with_fitness = []
+        for ind in population:
+            fit = calculate_fitness(ind)
+            pop_with_fitness.append({'individual': ind, 'fitness': fit})
+        pop_with_fitness.sort(key=lambda x: x['fitness'], reverse=True)
+
+        current_best = pop_with_fitness[0]
+        if current_best['fitness'] > best_fitness:
+            best_fitness = current_best['fitness']
+            best_solution = current_best['individual'][:]
+
+        total_dist = (1.0 / best_fitness) - 1.0
+
+        if gen % 25 == 0 or gen == 1 or gen == MAX_GENERATIONS:
+            print(f"Покоління {gen:3d}/{MAX_GENERATIONS} | Найкращий fitness: {best_fitness:.6f} | Сума відстаней: {total_dist:.4f}")
+
+        if gen == MAX_GENERATIONS:
+            print("\nДосягнуто ліміту поколінь.")
+            break
+
+        new_population = []
+
+        for i in range(ELITISM_COUNT):
+            new_population.append(pop_with_fitness[i]['individual'][:])
+
+        while len(new_population) < POPULATION_SIZE:
+            p1 = selection(pop_with_fitness)
+            p2 = selection(pop_with_fitness)
+            child = crossover(p1, p2)
+            child = mutate(child)
+            new_population.append(child)
+
+        population = new_population
+
+    print("\n--- Еволюцію завершено ---")
+    if best_solution is None:
+        print("Не вдалося отримати рішення.")
+        return
+
+    best_total = (1.0 / best_fitness) - 1.0
+    open_idx = [i for i, b in enumerate(best_solution) if b == 1]
+
+    print(f"Найкраще знайдене розміщення (індекси відкритих складів): {open_idx}")
+    print(f"Сума відстаней до найближчих відкритих складів: {best_total:.4f}")
+    print("Координати відкритих складів:")
+    for j in open_idx:
+        print(f"  F{j}: {FACILITIES[j]}")
+
+    avg_distance = best_total / N
+    max_client_distance = 0
+    for c in CLIENTS:
+        best_j = min(open_idx, key=lambda j: euclid(c, FACILITIES[j]))
+        dist = euclid(c, FACILITIES[best_j])
+        if dist > max_client_distance:
+            max_client_distance = dist
+
+    print(f"Середня відстань на клієнта: {avg_distance:.4f}")
+    print(f"Максимальна відстань клієнта: {max_client_distance:.4f}")
+
+    visualize_solution(best_solution)
+
+if __name__ == "__main__":
+    run_ga()
