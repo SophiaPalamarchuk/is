@@ -1,0 +1,354 @@
+#На Easy привиди мають сильно обмежене спостереження: вони бачать Pac-Man’а лише при прямій видимості, 
+# а в інших випадках рухаються випадково, тому їхня поведінка проста й некоординована. 
+#На Medium привиди завжди знають позицію гравця та використовують жадібне наближення до нього, що створює природне 
+# “стадне переслідування”: вони можуть перегороджувати шляхи, хоча не координуються між собою. 
+#На Hard кожен привид отримує власну роль і цільову функцію (перехоплення, флангування, кооперація з іншим привидом)
+
+
+
+import tkinter as tk
+import math
+import random
+
+TILE_SIZE = 32  # розмір клітинки в пікселях
+
+class Game:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Pac-Man Tkinter – Emergent Ghost AI")
+
+        # Проста лабіринтна карта (17x11)
+        # '#' – стіна
+        # '.' – "крупка" (pellet)
+        # ' ' – просто підлога
+        self.maze = [
+            list("#################"),
+            list("#...............#"),
+            list("#.#####.#####...#"),
+            list("#...............#"),
+            list("#.###.#####.###.#"),
+            list("#...............#"),
+            list("#.###.#.###.#.###"),
+            list("#.....#.....#...#"),
+            list("#.###.#.###.#.###"),
+            list("#...............#"),
+            list("#################"),
+        ]
+        self.height = len(self.maze)
+        self.width = len(self.maze[0])
+
+        # Полотно
+        self.canvas = tk.Canvas(
+            root,
+            width=self.width * TILE_SIZE,
+            height=self.height * TILE_SIZE,
+            bg="black"
+        )
+        self.canvas.pack()
+
+        # Стартові позиції
+        self.pac_x, self.pac_y = 1, 1          # Pac-Man
+        self.pac_dir = (0, 0)                  # поточний напрямок
+        self.next_dir = (0, 0)                 # бажаний наступний напрямок
+
+        # Привиди: Blinky, Pinky, Inky, Clyde
+        cx = self.width // 2
+        cy = self.height // 2
+        self.ghosts = [
+            {"name": "Blinky", "x": cx,     "y": 3,  "dir": (0, 0), "color": "red"},
+            {"name": "Pinky",  "x": cx,     "y": cy, "dir": (0, 0), "color": "pink"},
+            {"name": "Inky",   "x": cx - 1, "y": cy, "dir": (0, 0), "color": "cyan"},
+            {"name": "Clyde",  "x": cx + 1, "y": cy, "dir": (0, 0), "color": "orange"},
+        ]
+
+        self.difficulty = 1  # 1=Easy, 2=Medium, 3=Hard
+        self.game_over = False
+        self.tick_ms = 160   # один крок гри (чим менше — тим швидше)
+
+        # Прив'язка клавіш
+        self.root.bind("<KeyPress>", self.on_key_press)
+
+        # Запуск циклу оновлення
+        self.update_loop()
+
+    # ===========================
+    #   Допоміжні функції
+    # ===========================
+
+    def is_wall(self, x, y):
+        """Чи є клітинка стіною або виходом за межі."""
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return True
+        return self.maze[y][x] == "#"
+
+    def ghost_line_of_sight(self, gx, gy):
+        """Чи бачить привид Pac-Man'а у тій же стрічці/стовпці без стіни між ними."""
+        px, py = self.pac_x, self.pac_y
+        if gx == px:
+            step = 1 if gy < py else -1
+            for ty in range(gy + step, py, step):
+                if self.maze[ty][gx] == "#":
+                    break
+            else:
+                return True
+        if gy == py:
+            step = 1 if gx < px else -1
+            for tx in range(gx + step, px, step):
+                if self.maze[py][tx] == "#":
+                    break
+            else:
+                return True
+        return False
+
+    # ===========================
+    #   Обробка клавіш
+    # ===========================
+
+    def on_key_press(self, event):
+        key = event.keysym
+        if key == "Escape":
+            self.root.quit()
+
+        # Зміна складності
+        if key == "1":
+            self.difficulty = 1
+        elif key == "2":
+            self.difficulty = 2
+        elif key == "3":
+            self.difficulty = 3
+
+        if self.game_over:
+            if key in ("r", "R"):
+                self.reset_game()
+            return
+
+        # Керування Pac-Man
+        if key == "Up":
+            self.next_dir = (0, -1)
+        elif key == "Down":
+            self.next_dir = (0, 1)
+        elif key == "Left":
+            self.next_dir = (-1, 0)
+        elif key == "Right":
+            self.next_dir = (1, 0)
+
+    # ===========================
+    #   Логіка привидів
+    # ===========================
+
+    def update_ghost_direction(self, ghost):
+        gx, gy = ghost["x"], ghost["y"]
+        dx, dy = ghost["dir"]
+        name = ghost["name"]
+
+        # EASY: тільки якщо бачить Pac-Man'а по прямій – женеться; інакше блукає
+        if self.difficulty == 1:
+            if self.ghost_line_of_sight(gx, gy):
+                target_x, target_y = self.pac_x, self.pac_y
+            else:
+                # випадкове блукання з уникненням розвороту
+                if self.is_wall(gx + dx, gy + dy) or (dx == 0 and dy == 0):
+                    options = []
+                    for nx, ny in [(1,0), (-1,0), (0,1), (0,-1)]:
+                        if (nx, ny) == (-dx, -dy):
+                            continue
+                        if not self.is_wall(gx + nx, gy + ny):
+                            options.append((nx, ny))
+                    if options:
+                        ghost["dir"] = random.choice(options)
+                    else:
+                        ghost["dir"] = (-dx, -dy)
+                return
+        else:
+            # MEDIUM / HARD – активне переслідування
+            if self.difficulty == 3:
+                # HARD: різні "особистості"
+                if name == "Pinky":
+                    # 4 клітинки вперед по напряму Pac-Man'а
+                    pdx, pdy = self.pac_dir
+                    if pdx == 0 and pdy == 0:
+                        target_x, target_y = self.pac_x, self.pac_y
+                    else:
+                        target_x = self.pac_x + 4 * pdx
+                        target_y = self.pac_y + 4 * pdy
+                        target_x = max(0, min(self.width - 1, target_x))
+                        target_y = max(0, min(self.height - 1, target_y))
+                elif name == "Inky":
+                    # Inky: використовує позицію Blinky + точку 2 клітинки попереду Pac-Man'а
+                    blinky = next(g for g in self.ghosts if g["name"] == "Blinky")
+                    pdx, pdy = self.pac_dir
+                    if pdx == 0 and pdy == 0:
+                        two_x, two_y = self.pac_x, self.pac_y
+                    else:
+                        two_x = self.pac_x + 2 * pdx
+                        two_y = self.pac_y + 2 * pdy
+                    vx = two_x - blinky["x"]
+                    vy = two_y - blinky["y"]
+                    target_x = blinky["x"] + 2 * vx
+                    target_y = blinky["y"] + 2 * vy
+                    target_x = max(0, min(self.width - 1, target_x))
+                    target_y = max(0, min(self.height - 1, target_y))
+                elif name == "Clyde":
+                    # Clyde: якщо далеко – женеться, якщо близько (<=8) – тікає в кут
+                    dist = abs(gx - self.pac_x) + abs(gy - self.pac_y)
+                    if dist <= 8:
+                        target_x, target_y = 1, self.height - 2  # кут
+                    else:
+                        target_x, target_y = self.pac_x, self.pac_y
+                else:
+                    # Blinky – пряме переслідування
+                    target_x, target_y = self.pac_x, self.pac_y
+            else:
+                # MEDIUM: усі просто женуться за Pac-Man'ом
+                target_x, target_y = self.pac_x, self.pac_y
+
+        # Жадібний вибір напрямку до цілі
+        best_dir = None
+        best_dist = float("inf")
+        opposite = (-dx, -dy)
+        for nx, ny in [(1,0), (-1,0), (0,1), (0,-1)]:
+            if (nx, ny) == opposite:
+                continue
+            if self.is_wall(gx + nx, gy + ny):
+                continue
+            d = math.hypot(target_x - (gx + nx), target_y - (gy + ny))
+            if d < best_dist:
+                best_dist = d
+                best_dir = (nx, ny)
+        if best_dir is None:
+            best_dir = opposite
+        ghost["dir"] = best_dir
+
+    # ===========================
+    #   Оновлення стану гри
+    # ===========================
+
+    def reset_game(self):
+        self.pac_x, self.pac_y = 1, 1
+        self.pac_dir = (0, 0)
+        self.next_dir = (0, 0)
+        cx = self.width // 2
+        cy = self.height // 2
+        positions = [(cx, 3), (cx, cy), (cx-1, cy), (cx+1, cy)]
+        for ghost, (gx, gy) in zip(self.ghosts, positions):
+            ghost["x"] = gx
+            ghost["y"] = gy
+            ghost["dir"] = (0, 0)
+        self.game_over = False
+
+    def update_loop(self):
+        if not self.game_over:
+            self.update_game()
+        self.draw()
+        self.root.after(self.tick_ms, self.update_loop)
+
+    def update_game(self):
+        # Зміна напряму Pac-Man'а, якщо можливо
+        if self.next_dir != (0, 0):
+            ndx, ndy = self.next_dir
+            if not self.is_wall(self.pac_x + ndx, self.pac_y + ndy):
+                self.pac_dir = self.next_dir
+                self.next_dir = (0, 0)
+
+        # Рух Pac-Man'а
+        dx, dy = self.pac_dir
+        if dx != 0 or dy != 0:
+            if not self.is_wall(self.pac_x + dx, self.pac_y + dy):
+                self.pac_x += dx
+                self.pac_y += dy
+
+        # "З'їдання" крупки (опціонально)
+        if self.maze[self.pac_y][self.pac_x] == ".":
+            self.maze[self.pac_y][self.pac_x] = " "
+
+        # Оновлення напрямів привидів
+        for ghost in self.ghosts:
+            self.update_ghost_direction(ghost)
+
+        # Рух привидів
+        for ghost in self.ghosts:
+            gx, gy = ghost["x"], ghost["y"]
+            gdx, gdy = ghost["dir"]
+            if gdx != 0 or gdy != 0:
+                if not self.is_wall(gx + gdx, gy + gdy):
+                    ghost["x"] += gdx
+                    ghost["y"] += gdy
+
+        # Перевірка зіткнень
+        for ghost in self.ghosts:
+            if ghost["x"] == self.pac_x and ghost["y"] == self.pac_y:
+                self.game_over = True
+                break
+
+    # ===========================
+    #   Малювання
+    # ===========================
+
+    def draw(self):
+        self.canvas.delete("all")
+
+        # Малюємо лабіринт
+        for y in range(self.height):
+            for x in range(self.width):
+                c = self.maze[y][x]
+                px = x * TILE_SIZE
+                py = y * TILE_SIZE
+                if c == "#":
+                    self.canvas.create_rectangle(
+                        px, py, px + TILE_SIZE, py + TILE_SIZE,
+                        fill="navy", outline="black"
+                    )
+                elif c == ".":
+                    # Крупка
+                    self.canvas.create_oval(
+                        px + TILE_SIZE//2 - 3, py + TILE_SIZE//2 - 3,
+                        px + TILE_SIZE//2 + 3, py + TILE_SIZE//2 + 3,
+                        fill="white", outline=""
+                    )
+
+        # Pac-Man
+        self.canvas.create_oval(
+            self.pac_x * TILE_SIZE + 4,
+            self.pac_y * TILE_SIZE + 4,
+            (self.pac_x + 1) * TILE_SIZE - 4,
+            (self.pac_y + 1) * TILE_SIZE - 4,
+            fill="yellow", outline=""
+        )
+
+        # Привиди
+        for ghost in self.ghosts:
+            gx, gy = ghost["x"], ghost["y"]
+            self.canvas.create_oval(
+                gx * TILE_SIZE + 4,
+                gy * TILE_SIZE + 4,
+                (gx + 1) * TILE_SIZE - 4,
+                (gy + 1) * TILE_SIZE - 4,
+                fill=ghost["color"], outline=""
+            )
+
+        # Текст: складність
+        diff_name = {1: "Easy", 2: "Medium", 3: "Hard"}[self.difficulty]
+        self.canvas.create_text(
+            10, 10,
+            text=f"Difficulty: {diff_name} (1-3)",
+            anchor="nw",
+            fill="white",
+            font=("Arial", 12, "bold")
+        )
+
+        if self.game_over:
+            self.canvas.create_text(
+                self.width * TILE_SIZE // 2,
+                self.height * TILE_SIZE // 2,
+                text="Pac-Man caught!\nPress R to restart",
+                fill="red",
+                font=("Arial", 18, "bold"),
+                justify="center"
+            )
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    game = Game(root)
+    root.mainloop()
+1
